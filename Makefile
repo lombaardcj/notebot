@@ -1,4 +1,4 @@
-.PHONY: build up down restart rebuild logs shell
+.PHONY: build up down restart rebuild hotreload logs shell
 
 # Build the image without starting
 build:
@@ -6,6 +6,10 @@ build:
 
 # Start in background
 up:
+	@if pgrep -f telegram_transcriber_bot.py > /dev/null 2>&1; then \
+		echo "⚠️  WARNING: a local telegram_transcriber_bot.py process is running!"; \
+		echo "   Two instances on the same token will split updates. Kill it first."; \
+	fi
 	docker compose up -d
 
 # Stop and remove containers
@@ -21,6 +25,16 @@ rebuild:
 	docker compose down
 	docker compose build --no-cache
 	docker compose up -d
+	docker compose logs -f
+
+# Fast reload: re-copy changed .py file and recreate container to pick up .env.
+# Docker cache keeps every layer above COPY, so this takes seconds not minutes.
+hotreload:
+	@if pgrep -f telegram_transcriber_bot.py > /dev/null 2>&1; then \
+		echo "⚠️  WARNING: a local telegram_transcriber_bot.py process is running!"; \
+		echo "   Two instances on the same token will split updates. Kill it first."; \
+	fi
+	docker compose up -d --build
 	docker compose logs -f
 
 # Follow live logs
