@@ -1,0 +1,20 @@
+# Never bake secrets or local data into the image
+.env
+secrets/
+
+# Runtime data — mounted as volumes at run time
+logs/
+transcripts/
+
+# Python artefacts
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Dev/test files not needed in the image
+test_sheets.py
+docs/
+*.md
+.git/
+.gitignore

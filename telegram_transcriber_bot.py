@@ -123,6 +123,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Load Whisper model once at startup
+# HF_TOKEN is optional. If set, it authenticates with HuggingFace for higher
+# download rate limits. If absent, the warning from huggingface_hub is silenced
+# so logs stay clean — the bot works identically either way.
+_hf_token = os.getenv("HF_TOKEN", "").strip()
+if _hf_token:
+    os.environ.setdefault("HUGGING_FACE_HUB_TOKEN", _hf_token)
+else:
+    logging.getLogger("huggingface_hub.utils._http").setLevel(logging.ERROR)
 logger.info(f"Loading Whisper model: {WHISPER_MODEL_SIZE} ...")
 whisper_model = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
 logger.info("Whisper model loaded.")

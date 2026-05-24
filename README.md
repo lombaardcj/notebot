@@ -52,6 +52,59 @@ Run the bot:
 python3 telegram_transcriber_bot.py
 ```
 
+## Running with Docker
+
+Docker is the easiest way to run notebot without managing a Python environment yourself.
+
+### Quick start — single container
+
+```bash
+docker run -d \
+  --name notebot \
+  --restart unless-stopped \
+  --env-file .env \
+  -v "$(pwd)/logs:/app/logs" \
+  -v "$(pwd)/transcripts:/app/transcripts" \
+  -v "$(pwd)/secrets:/app/secrets" \
+  ghcr.io/lombaardcj/notebot:latest
+```
+
+### Recommended — Docker Compose
+
+```bash
+docker compose up -d          # start in background
+docker compose logs -f        # follow logs
+docker compose down           # stop
+docker compose pull && docker compose up -d   # update to latest image
+```
+
+**Developing locally?** A `Makefile` is included with shortcuts for the common dev cycle:
+
+```bash
+make rebuild   # teardown → no-cache build → start → tail logs  (use after code changes)
+make logs      # tail live logs
+make shell     # open a shell inside the running container
+make down      # stop and remove containers
+```
+
+The `docker-compose.yml` in this repo mounts `logs/`, `transcripts/`, and `secrets/` from the host so your data persists across container restarts. The Whisper model is cached in a named Docker volume (`whisper-cache`) so it is only downloaded once.
+
+### Building locally
+
+```bash
+docker build -t notebot .
+docker run -d --name notebot --restart unless-stopped \
+  --env-file .env \
+  -v "$(pwd)/logs:/app/logs" \
+  -v "$(pwd)/transcripts:/app/transcripts" \
+  -v "$(pwd)/secrets:/app/secrets" \
+  notebot
+```
+
+> **Whisper model download:** On first start the bot will download the `base` Whisper model (~150 MB). Subsequent starts use the cached volume and start immediately.
+
+---
+
 ## Configuration
 
 | Variable | Required | Description |
@@ -144,11 +197,14 @@ This writes a test row, reads it back to confirm it worked, then offers to delet
 
 ```
 telegram_transcriber_bot.py   # main bot script
+Dockerfile                    # container image definition
+docker-compose.yml            # compose service definition
 logs/
   requests.jsonl              # one entry per incoming message
   transcriptions.jsonl        # one entry per transcription
   access.json                 # approved and pending chat IDs
 transcripts/                  # saved markdown transcripts
+secrets/                      # service account credentials (git-ignored)
 ```
 
 ## License

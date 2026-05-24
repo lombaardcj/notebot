@@ -1,0 +1,16 @@
+services:
+  notebot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Persist transcripts and logs on the host
+      - ./logs:/app/logs
+      - ./transcripts:/app/transcripts
+      # Mount secrets folder so credentials.json is accessible inside the container
+      - ./secrets:/app/secrets
+      # Cache the Whisper model between restarts so it isn't re-downloaded
+      - whisper-cache:/root/.cache
+
+volumes:
+  whisper-cache:
