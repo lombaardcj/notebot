@@ -1,0 +1,4 @@
+faster-whisper==1.2.1
+google-auth==2.53.0
+gspread==6.2.1
+python-telegram-bot==22.7
