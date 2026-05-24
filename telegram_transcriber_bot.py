@@ -99,10 +99,10 @@ ALLOWED_CHAT_IDS: list[int] = [
 # Mutable set populated by init_approved_chat_ids() — checked dynamically per message.
 APPROVED_CHAT_IDS: set[int] = set()
 
-# Google Sheets
-GOOGLE_ENABLED = False                        # Set to True when ready
-GOOGLE_SERVICE_ACCOUNT_FILE = "credentials.json"  # Path to your service account JSON
-GOOGLE_SHEET_NAME = "Voice Transcripts"       # Name of your Google Sheet
+# Google Sheets — all config driven from .env
+GOOGLE_ENABLED = os.getenv("GOOGLE_ENABLED", "false").strip().lower() == "true"
+GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "credentials.json")
+GOOGLE_SHEET_NAME = os.getenv("GOOGLE_SHEET_NAME", "Voice Transcripts")
 
 # Local markdown files
 LOCAL_ENABLED = True                          # Enabled by default, no setup needed
@@ -451,21 +451,24 @@ def save_to_local(timestamp: str, transcript: str, sender: str):
 
 
 def save_to_google_sheets(timestamp: str, transcript: str, sender: str):
-    """Append a row to Google Sheets."""
+    """Append a row to Google Sheets, creating a header row on first use."""
     if not GSPREAD_AVAILABLE:
         logger.warning("gspread not installed. Skipping Google Sheets.")
+        return
+    if not Path(GOOGLE_SERVICE_ACCOUNT_FILE).exists():
+        logger.error(f"Google credentials file not found: {GOOGLE_SERVICE_ACCOUNT_FILE}")
         return
     try:
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
+            "https://www.googleapis.com/auth/drive",
         ]
         creds = Credentials.from_service_account_file(GOOGLE_SERVICE_ACCOUNT_FILE, scopes=scopes)
         client = gspread.authorize(creds)
         sheet = client.open(GOOGLE_SHEET_NAME).sheet1
 
-        # Add header row if sheet is empty
-        if sheet.row_count == 0 or not sheet.get_all_values():
+        # Write header only if the sheet is truly empty
+        if not sheet.get_all_values():
             sheet.append_row(["Timestamp", "Sender", "Transcript"])
 
         sheet.append_row([timestamp, sender, transcript])

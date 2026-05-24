@@ -57,6 +57,9 @@ python3 telegram_transcriber_bot.py
 | `TELEGRAM_BOT_TOKEN` | Yes | Token from @BotFather |
 | `ADMIN_CHAT_ID` | Yes | Chat ID with full admin privileges |
 | `ALLOWED_CHAT_IDS` | No | Comma-separated seed list of approved chat IDs |
+| `GOOGLE_ENABLED` | No | Set to `true` to enable Google Sheets output (default: `false`) |
+| `GOOGLE_SERVICE_ACCOUNT_FILE` | No | Path to your service account JSON (default: `secrets/your-file.json`) |
+| `GOOGLE_SHEET_NAME` | No | Name of the Google Sheet to write to (default: `Voice Transcripts`) |
 
 ## Commands
 
@@ -72,6 +75,68 @@ python3 telegram_transcriber_bot.py
 | `/approve <id>` | Admin | Manually approve a chat ID |
 | `/deny <id>` | Admin | Reject a pending request |
 | `/revoke <id>` | Admin | Remove access from an approved user |
+
+## Google Sheets integration (optional, advanced)
+
+> **This is not required.** Transcripts are always saved to local markdown files. Google Sheets is an optional extra for users who want transcripts in a shared spreadsheet.
+
+### What you need
+
+- A Google account
+- A Google Cloud project (free tier is sufficient)
+- Comfort with the Google Cloud Console
+
+### Step 1 — Create a Google Cloud project
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com/)
+2. Click **Select a project → New project**, give it a name, click **Create**
+
+### Step 2 — Enable the Sheets and Drive APIs
+
+1. In your project, go to **APIs & Services → Library**
+2. Search for and enable **Google Sheets API**
+3. Search for and enable **Google Drive API**
+
+### Step 3 — Create a service account
+
+1. Go to **IAM & Admin → Service Accounts → Create service account**
+2. Give it a name (e.g. `telegram-notebot`), click **Create and continue**, then **Done**
+3. Click on the service account you just created → **Keys → Add key → Create new key → JSON**
+4. A `.json` file is downloaded — this is your credentials file
+
+### Step 4 — Store the credentials file
+
+Place the downloaded file in the `secrets/` folder inside the project:
+
+```
+secrets/your-service-account-file.json
+```
+
+> `secrets/` is excluded from git. Never commit this file.
+
+### Step 5 — Create the Google Sheet and share it
+
+1. Go to [sheets.google.com](https://sheets.google.com) and create a new spreadsheet
+2. Name it exactly as you'll set in `GOOGLE_SHEET_NAME` (default: `Voice Transcripts`)
+3. Click **Share**, paste the service account's `client_email` (found inside the `.json` file), and give it **Editor** access
+
+### Step 6 — Update your `.env`
+
+```
+GOOGLE_ENABLED=true
+GOOGLE_SERVICE_ACCOUNT_FILE=secrets/your-service-account-file.json
+GOOGLE_SHEET_NAME=Voice Transcripts
+```
+
+### Step 7 — Test before running the bot
+
+```bash
+python3 test_sheets.py
+```
+
+This writes a test row, reads it back to confirm it worked, then offers to delete it.
+
+---
 
 ## File layout
 
