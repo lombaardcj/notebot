@@ -10,6 +10,10 @@ transcripts/*
 !transcripts/.gitkeep
 .env
 
+# Google service account credentials — never commit this
+credentials.json
+secrets/
+
 # Whisper model cache
 models/
 ~/.cache/huggingface/
