@@ -3,6 +3,17 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# ── notebot: runtime data (never commit personal data) ──────────────────
+logs/*
+!logs/.gitkeep
+transcripts/*
+!transcripts/.gitkeep
+.env
+
+# Whisper model cache
+models/
+~/.cache/huggingface/
+
 # C extensions
 *.so
 
