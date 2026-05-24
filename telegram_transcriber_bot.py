@@ -31,7 +31,10 @@ import datetime
 from pathlib import Path
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder, MessageHandler, CommandHandler, CallbackQueryHandler,
+    filters, ContextTypes,
+)
 from faster_whisper import WhisperModel
 
 # Optional integrations — imported only if credentials are provided
@@ -501,6 +504,126 @@ auth_filter = _AuthFilter()
 
 
 # ─────────────────────────────────────────────
+#  UI HELPERS — keyboards and text builders
+# ─────────────────────────────────────────────
+
+# Language presets shown in the language picker (label, comma-separated codes).
+_LANG_PRESETS = [
+    ("🇿🇦 Afrikaans + English",   "af,en"),
+    ("🇬🇧 English",               "en"),
+    ("🇫🇷 French + English",      "fr,en"),
+    ("🇩🇪 German + English",      "de,en"),
+    ("🇪🇸 Spanish + English",     "es,en"),
+    ("🇵🇹 Portuguese + English",  "pt,en"),
+    ("🇳🇱 Dutch + English",       "nl,en"),
+    ("🇷🇺 Russian",               "ru"),
+    ("🇨🇳 Chinese",               "zh"),
+    ("🇮🇳 Hindi + English",       "hi,en"),
+]
+
+
+def _main_menu_text() -> str:
+    return (
+        "👋 *Voice Transcription Bot*\n\n"
+        "Send me a *voice message* or *audio file* and I'll transcribe it instantly.\n\n"
+        "_Language is always auto-detected._"
+    )
+
+
+def _main_menu_keyboard(is_admin: bool, pending_count: int = 0) -> InlineKeyboardMarkup:
+    pending_label = (
+        f"📋 Pending requests ({pending_count})" if pending_count else "📋 Pending requests"
+    )
+    rows: list = []
+    if is_admin:
+        rows.append([InlineKeyboardButton(pending_label, callback_data="menu_pending")])
+        rows.append([InlineKeyboardButton("🔐 Admin Panel", callback_data="menu_admin")])
+    rows.append([
+        InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings"),
+        InlineKeyboardButton("📊 Stats",    callback_data="menu_stats"),
+    ])
+    return InlineKeyboardMarkup(rows)
+
+
+def _settings_text(user_id: int) -> str:
+    langs = get_user_languages(user_id)
+    return (
+        "⚙️ *Your Settings*\n\n"
+        f"Preferred languages: `{' '.join(langs)}`\n\n"
+        "_Whisper always auto-detects the language. Your list is used to warn you "
+        "when something unexpected is detected._"
+    )
+
+
+def _settings_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🌐 Change Languages", callback_data="menu_lang_picker")],
+        [InlineKeyboardButton("🔙 Main Menu",        callback_data="menu_main")],
+    ])
+
+
+def _lang_picker_keyboard() -> InlineKeyboardMarkup:
+    rows = []
+    for i in range(0, len(_LANG_PRESETS), 2):
+        row = [
+            InlineKeyboardButton(label, callback_data=f"lang_preset:{codes}")
+            for label, codes in _LANG_PRESETS[i:i + 2]
+        ]
+        rows.append(row)
+    rows.append([InlineKeyboardButton("🔙 Back", callback_data="menu_settings")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _build_stats_text(is_admin: bool) -> str:
+    s = get_usage_stats()
+    t = s["transcriptions"]
+    w = s["words"]
+
+    lang_lines = "\n".join(
+        f"  {lang}: {count}" for lang, count in s["by_lang"].items()
+    ) or "  none yet"
+
+    source_line = (
+        f"voice: {s['by_source'].get('voice', 0)}  ·  "
+        f"audio file: {s['by_source'].get('audio', 0)}"
+    )
+
+    uptime = datetime.datetime.now() - BOT_START_TIME
+    uptime_str = str(uptime).split(".")[0]
+
+    msg = (
+        "📊 *Usage Stats*\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "*Transcriptions*\n"
+        f"  Today: {t['today']}  ·  Week: {t['week']}  ·  Month: {t['month']}  ·  All-time: {t['all_time']}\n"
+        "\n*Words transcribed*\n"
+        f"  Today: {w['today']}  ·  Week: {w['week']}  ·  Month: {w['month']}  ·  All-time: {w['all_time']}\n"
+        "\n*Input type (all-time)*\n"
+        f"  {source_line}\n"
+        "\n*Languages detected (all-time)*\n"
+        f"{lang_lines}\n"
+        "\n*Session*\n"
+        f"  Uptime: {uptime_str}\n"
+        f"  Active days: {s['active_days_all_time']}\n"
+    )
+
+    if s["avg_length_chars"]:
+        msg += f"\n*Avg transcript length:* {s['avg_length_chars']} chars\n"
+
+    if is_admin:
+        msg += (
+            "\n━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🔐 *Admin — Access*\n"
+            f"  Approved users: {s['approved_count']}\n"
+            f"  Pending requests: {s['pending_count']}\n"
+        )
+        if s["pending_count"]:
+            msg += "  Use /pending to review.\n"
+
+    return msg
+
+
+# ─────────────────────────────────────────────
 #  TELEGRAM HANDLERS
 # ─────────────────────────────────────────────
 
@@ -613,11 +736,15 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle plain text messages with a helpful reply."""
+    """Handle plain text messages — nudge the user toward the menu."""
     log_request(update, "handle_text")
+    chat_id = update.effective_chat.id
+    is_admin = chat_id == ADMIN_CHAT_ID
+    pending_count = len(get_pending_requests()) if is_admin else 0
     await update.message.reply_text(
         "👋 Send me a *voice message* or *audio file* and I'll transcribe it for you!",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=_main_menu_keyboard(is_admin, pending_count),
     )
 
 
@@ -648,15 +775,13 @@ async def handle_setlanguages(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def handle_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show the current user settings."""
+    """Show the current user settings with inline edit buttons."""
     log_request(update, "handle_settings")
     user = update.effective_user
-    preferred = get_user_languages(user.id)
     await update.message.reply_text(
-        f"⚙️ *Your Settings*\n\n"
-        f"Preferred languages: `{' '.join(preferred)}`\n\n"
-        "Use `/setlanguages af en` to change.",
-        parse_mode="Markdown"
+        _settings_text(user.id),
+        parse_mode="Markdown",
+        reply_markup=_settings_keyboard(),
     )
 
 
@@ -673,11 +798,15 @@ async def handle_unauthorized(update: Update, context: ContextTypes.DEFAULT_TYPE
     access = _load_access()
     if chat_id in access["pending"]:
         await update.effective_message.reply_text(
-            "⏳ Your access request is pending approval. You'll be notified when approved."
+            "⏳ Your access request is still pending. You'll be notified when approved."
         )
     else:
         await update.effective_message.reply_text(
-            "🔒 This bot is private. Use /requestaccess to request access."
+            "🔒 *This bot is private.*\n\nTap the button below to request access.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("📨 Request Access", callback_data="req_access"),
+            ]]),
         )
 
 
@@ -694,14 +823,20 @@ async def handle_requestaccess(update: Update, context: ContextTypes.DEFAULT_TYP
             "📨 Access request sent. You will be notified once approved."
         )
         if ADMIN_CHAT_ID:
+            user = update.effective_user
+            name_hint = f"@{user.username}" if user.username else (user.first_name or str(chat_id))
             await context.bot.send_message(
                 chat_id=ADMIN_CHAT_ID,
                 text=(
                     "🔔 *New access request*\n\n"
-                    f"chat_id: `{chat_id}`\n\n"
-                    f"Use `/approve {chat_id}` to grant or `/deny {chat_id}` to reject."
+                    f"From: {name_hint}\n"
+                    f"chat_id: `{chat_id}`"
                 ),
                 parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("✅ Approve", callback_data=f"approve_{chat_id}"),
+                    InlineKeyboardButton("❌ Deny",    callback_data=f"deny_{chat_id}"),
+                ]]),
             )
     else:
         await update.message.reply_text("⏳ Your request is already pending.")
@@ -725,7 +860,10 @@ async def handle_approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_message(
             chat_id=target,
-            text="✅ Your access has been approved! Send /start to get started.",
+            text="✅ Your access has been approved! Tap below to get started.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🚀 Get Started", callback_data="menu_main"),
+            ]]),
         )
     except Exception:
         await update.message.reply_text(f"_(Could not notify {target} — they may not have messaged the bot yet.)_",
@@ -802,54 +940,208 @@ async def handle_pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton(f"❌ Deny {cid}", callback_data=f"deny_{cid}"),
         ])
     
-    markup = InlineKeyboardMarkup(keyboard)
+    keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu_main")])
     await update.message.reply_text(
         f"📋 *Pending access requests ({len(pending)}):*",
-        reply_markup=markup,
+        reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown",
     )
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle button presses from pending requests list."""
+    """Handle all inline button presses."""
     query = update.callback_query
     await query.answer()
-    
+
+    if not query.message:
+        return  # message was deleted before the button was pressed
+
     data = query.data
+    user_id = query.from_user.id
+    chat_id = query.message.chat_id
+    is_admin = chat_id == ADMIN_CHAT_ID
+
+    # ── Access request (unapproved users tapping the button) ─────────────────
+    if data == "req_access":
+        if chat_id in APPROVED_CHAT_IDS or is_admin:
+            await query.edit_message_text("✅ You already have access.")
+            return
+        added = add_pending_request(chat_id)
+        if added:
+            await query.edit_message_text(
+                "📨 Access request sent. You will be notified once approved."
+            )
+            if ADMIN_CHAT_ID:
+                user = query.from_user
+                name_hint = f"@{user.username}" if user.username else (user.first_name or str(chat_id))
+                await context.bot.send_message(
+                    chat_id=ADMIN_CHAT_ID,
+                    text=(
+                        "🔔 *New access request*\n\n"
+                        f"From: {name_hint}\n"
+                        f"chat_id: `{chat_id}`"
+                    ),
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("✅ Approve", callback_data=f"approve_{chat_id}"),
+                        InlineKeyboardButton("❌ Deny",    callback_data=f"deny_{chat_id}"),
+                    ]]),
+                )
+        else:
+            await query.edit_message_text(
+                "⏳ Your request is already pending. You'll be notified when approved."
+            )
+        return
+
+    # ── Navigation ────────────────────────────────────────────────────────────
+    if data == "menu_main":
+        pending_count = len(get_pending_requests()) if is_admin else 0
+        await query.edit_message_text(
+            _main_menu_text(),
+            parse_mode="Markdown",
+            reply_markup=_main_menu_keyboard(is_admin, pending_count),
+        )
+        return
+
+    if data == "menu_settings":
+        await query.edit_message_text(
+            _settings_text(user_id),
+            parse_mode="Markdown",
+            reply_markup=_settings_keyboard(),
+        )
+        return
+
+    if data == "menu_stats":
+        await query.edit_message_text(
+            _build_stats_text(is_admin),
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Refresh",   callback_data="menu_stats"),
+                 InlineKeyboardButton("🔙 Main Menu", callback_data="menu_main")],
+            ]),
+        )
+        return
+
+    if data == "menu_ping":
+        if not is_admin:
+            return
+        uptime = datetime.datetime.now() - BOT_START_TIME
+        uptime_str = str(uptime).split(".")[0]
+        await query.edit_message_text(
+            f"pong ✅  uptime: {uptime_str}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔙 Admin Panel", callback_data="menu_admin"),
+            ]]),
+        )
+        return
+
+    if data == "menu_admin":
+        if not is_admin:
+            return
+        await query.edit_message_text(
+            "🔐 *Admin Panel*\n\n"
+            "_User-specific actions require an ID — use the commands below:_\n"
+            "`/approve <id>`  ·  `/deny <id>`  ·  `/revoke <id>`",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("🏓 Ping",              callback_data="menu_ping"),
+                    InlineKeyboardButton("📄 Pending requests", callback_data="menu_pending"),
+                ],
+                [InlineKeyboardButton("📊 Stats",              callback_data="menu_stats")],
+                [InlineKeyboardButton("🔙 Main Menu",          callback_data="menu_main")],
+            ]),
+        )
+        return
+
+    if data == "menu_pending":
+        if not is_admin:
+            return
+        pending = get_pending_requests()
+        if not pending:
+            await query.edit_message_text(
+                "✅ No pending access requests.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Main Menu", callback_data="menu_main"),
+                ]]),
+            )
+            return
+        keyboard = [
+            [InlineKeyboardButton(f"✅ Approve {cid}", callback_data=f"approve_{cid}"),
+             InlineKeyboardButton(f"❌ Deny {cid}",    callback_data=f"deny_{cid}")]
+            for cid in pending
+        ]
+        keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu_main")])
+        await query.edit_message_text(
+            f"📋 *Pending access requests ({len(pending)}):*",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+
+    if data == "menu_lang_picker":
+        await query.edit_message_text(
+            "🌐 *Choose your preferred languages:*\n\n"
+            "_Whisper always auto-detects — this controls which languages are 'expected'._",
+            parse_mode="Markdown",
+            reply_markup=_lang_picker_keyboard(),
+        )
+        return
+
+    # ── Language preset selection ─────────────────────────────────────────────
+    if data.startswith("lang_preset:"):
+        codes_str = data.split(":", 1)[1]
+        langs = [c.strip() for c in codes_str.split(",") if c.strip()]
+        username = query.from_user.username or str(user_id)
+        set_user_languages(user_id, username, langs)
+        await query.edit_message_text(
+            f"✅ Languages set to: `{' '.join(langs)}`",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⚙️ Back to Settings", callback_data="menu_settings")],
+                [InlineKeyboardButton("🔙 Main Menu",        callback_data="menu_main")],
+            ]),
+        )
+        return
+
+    # ── Admin approve / deny ──────────────────────────────────────────────────
     if data.startswith("approve_"):
         try:
             target = int(data.split("_")[1])
         except (ValueError, IndexError):
             await query.edit_message_text("❌ Invalid request.")
             return
-        
         approve_chat_id(target)
-        await query.edit_message_text(f"✅ Approved `{target}`.\n\nNotifying user...", parse_mode="Markdown")
+        await query.edit_message_text(f"✅ Approved `{target}`.", parse_mode="Markdown")
         try:
             await context.bot.send_message(
                 chat_id=target,
-                text="✅ Your access has been approved! Send /start to get started.",
+                text="✅ Your access has been approved! Tap below to get started.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🚀 Get Started", callback_data="menu_main"),
+                ]]),
             )
         except Exception as e:
             logger.warning(f"Could not notify {target}: {e}")
-    
-    elif data.startswith("deny_"):
+        return
+
+    if data.startswith("deny_"):
         try:
             target = int(data.split("_")[1])
         except (ValueError, IndexError):
             await query.edit_message_text("❌ Invalid request.")
             return
-        
         deny_chat_id(target)
-        await query.edit_message_text(f"⛔ Denied `{target}`.\n\nNotifying user...", parse_mode="Markdown")
+        await query.edit_message_text(f"⛔ Denied `{target}`.", parse_mode="Markdown")
         try:
             await context.bot.send_message(chat_id=target, text="⛔ Your access request was not approved.")
         except Exception as e:
             logger.warning(f"Could not notify {target}: {e}")
+        return
 
 
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Respond to /start — visible to everyone so unapproved users see /requestaccess."""
+    """Respond to /start and /help — visible to everyone."""
     log_request(update, "handle_start")
     chat_id = update.effective_chat.id
     is_admin = chat_id == ADMIN_CHAT_ID
@@ -857,37 +1149,26 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not approved:
         await update.message.reply_text(
-            "🔒 *This bot is private.*\n\n"
-            "Use /requestaccess to request access.",
+            "🔒 *This bot is private.*\n\nTap the button below to request access.",
             parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("📨 Request Access", callback_data="req_access"),
+            ]]),
         )
         return
 
-    admin_cmds = (
-        "\n*Admin commands:*\n"
-        "/pending — List pending access requests\n"
-        "/approve `<chat_id>` — Grant access\n"
-        "/deny `<chat_id>` — Reject access request\n"
-        "/revoke `<chat_id>` — Remove access from approved user\n"
-    ) if is_admin else ""
-
+    pending_count = len(get_pending_requests()) if is_admin else 0
     await update.message.reply_text(
-        "👋 *Voice Transcription Bot*\n\n"
-        "Send me a voice message or audio file and I'll transcribe it for you.\n\n"
-        "*Commands:*\n"
-        "/start — Show this message\n"
-        "/ping — Check if the bot is online\n"
-        "/stats — Usage statistics\n"
-        "/settings — View your preferences\n"
-        "/setlanguages `af en` — Set preferred language codes\n"
-        + admin_cmds +
-        "\n_Language is always auto-detected._",
+        _main_menu_text(),
         parse_mode="Markdown",
+        reply_markup=_main_menu_keyboard(is_admin, pending_count),
     )
 
 
 async def handle_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Simple health-check endpoint for manual bot verification."""
+    """Admin only: simple health-check endpoint."""
+    if update.effective_chat.id != ADMIN_CHAT_ID:
+        return
     log_request(update, "handle_ping")
     uptime = datetime.datetime.now() - BOT_START_TIME
     uptime_seconds = int(uptime.total_seconds())
@@ -895,57 +1176,35 @@ async def handle_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show rich usage metrics. Admin also sees access stats."""
+    """Show rich usage metrics with a refresh button."""
     log_request(update, "handle_stats")
-    s = get_usage_stats()
-    t = s["transcriptions"]
-    w = s["words"]
-    r = s["requests"]
     is_admin = update.effective_chat.id == ADMIN_CHAT_ID
-
-    lang_lines = "\n".join(
-        f"  {lang}: {count}"
-        for lang, count in s["by_lang"].items()
-    ) or "  none yet"
-
-    source_line = (
-        f"voice: {s['by_source'].get('voice', 0)}  ·  "
-        f"audio file: {s['by_source'].get('audio', 0)}"
+    await update.message.reply_text(
+        _build_stats_text(is_admin),
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Refresh",   callback_data="menu_stats"),
+             InlineKeyboardButton("🔙 Main Menu", callback_data="menu_main")],
+        ]),
     )
 
-    uptime = datetime.datetime.now() - BOT_START_TIME
-    uptime_str = str(uptime).split(".")[0]
 
-    msg = (
-        "📊 *Usage Stats*\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "*Transcriptions*\n"
-        f"  Today: {t['today']}  ·  Week: {t['week']}  ·  Month: {t['month']}  ·  All-time: {t['all_time']}\n"
-        "\n*Words transcribed*\n"
-        f"  Today: {w['today']}  ·  Week: {w['week']}  ·  Month: {w['month']}  ·  All-time: {w['all_time']}\n"
-        "\n*Input type (all-time)*\n"
-        f"  {source_line}\n"
-        "\n*Languages detected (all-time)*\n"
-        f"{lang_lines}\n"
-        "\n*Session*\n"
-        f"  Uptime: {uptime_str}\n"
-        f"  Active days: {s['active_days_all_time']}\n"
-    )
+# ─────────────────────────────────────────────
+#  ERROR HANDLER
+# ─────────────────────────────────────────────
 
-    if s["avg_length_chars"]:
-        msg += f"\n*Avg transcript length:* {s['avg_length_chars']} chars\n"
-
-    if is_admin:
-        msg += (
-            "\n━━━━━━━━━━━━━━━━━━━━━━\n"
-            "🔐 *Admin — Access*\n"
-            f"  Approved users: {s['approved_count']}\n"
-            f"  Pending requests: {s['pending_count']}\n"
-        )
-        if s["pending_count"]:
-            msg += "  Use /pending to review.\n"
-
-    await update.message.reply_text(msg, parse_mode="Markdown")
+async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Log exceptions and notify the admin so errors don't silently disappear."""
+    logger.error("Unhandled exception:", exc_info=context.error)
+    if ADMIN_CHAT_ID:
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=f"⚠️ *Bot error*\n\n`{type(context.error).__name__}: {context.error}`",
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
 
 
 # ─────────────────────────────────────────────
@@ -965,7 +1224,7 @@ def main():
     af = auth_filter  # approved users + admin
 
     # /start and /requestaccess are open to everyone so unapproved users can request access.
-    app.add_handler(CommandHandler("start",          handle_start))
+    app.add_handler(CommandHandler(["start", "help"], handle_start))
     app.add_handler(CommandHandler("requestaccess",  handle_requestaccess))
 
     # Admin-only commands (checked inside each handler).
@@ -975,7 +1234,7 @@ def main():
     app.add_handler(CommandHandler("pending",  handle_pending))
 
     # Approved-user commands.
-    app.add_handler(CommandHandler("ping",         handle_ping,         filters=af))
+    app.add_handler(CommandHandler("ping",         handle_ping))
     app.add_handler(CommandHandler("stats",        handle_stats,        filters=af))
     app.add_handler(CommandHandler("setlanguages", handle_setlanguages, filters=af))
     app.add_handler(CommandHandler("settings",     handle_settings,     filters=af))
@@ -983,14 +1242,20 @@ def main():
     app.add_handler(MessageHandler(af & (filters.AUDIO | filters.Document.AUDIO), handle_audio))
     app.add_handler(MessageHandler(af & filters.TEXT & ~filters.COMMAND, handle_text))
 
+    # Callback query handler must come before the catch-all MessageHandler because
+    # update.effective_message is non-null for callback queries in PTB, so
+    # MessageHandler(filters.ALL) would otherwise intercept every button press.
+    app.add_handler(CallbackQueryHandler(handle_callback))
+
     # Catch-all: guides unapproved users, silently ignores unsupported message types.
     app.add_handler(MessageHandler(filters.ALL, handle_unauthorized))
 
-    # Callback query handler for pending request buttons
-    app.add_handler(CallbackQueryHandler(handle_callback))
+    app.add_error_handler(handle_error)
 
     logger.info(f"Bot running. Admin: {ADMIN_CHAT_ID}  Approved: {APPROVED_CHAT_IDS}")
-    app.run_polling()
+    # Explicitly request all update types so Telegram's server-side cache can't
+    # silently drop callback_query (or any other type) from a previous session config.
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
