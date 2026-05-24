@@ -4,6 +4,8 @@ A self-hosted Telegram bot that transcribes voice messages and audio files using
 
 Transcripts are saved to local markdown files and optionally to Google Sheets. The bot runs entirely on your own hardware.
 
+→ [System architecture & interaction diagrams](docs/architecture.md)
+
 ## Features
 
 - Transcribes voice messages and audio file attachments
