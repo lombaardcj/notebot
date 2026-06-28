@@ -83,7 +83,7 @@ WHISPER_MODEL_SIZE = "base"
 
 # Default preferred languages for new users.
 # Users can override this with the /setlanguages command.
-DEFAULT_LANGUAGES = ["af", "en"]
+DEFAULT_LANGUAGES = ["en"]
 
 USER_SETTINGS_FILE = "user_settings.json"   # Stored inside LOGS_DIR
 ACCESS_FILE = "access.json"                 # Approved/pending chat IDs (inside LOGS_DIR)
@@ -150,13 +150,13 @@ Path(LOGS_DIR).mkdir(parents=True, exist_ok=True)
 #  TRANSCRIPTION
 # ─────────────────────────────────────────────
 
-def transcribe_audio(file_path: str) -> tuple:
-    """Transcribe an audio file using Faster-Whisper with full auto-detection.
+def transcribe_audio(file_path: str, language: str | None = None) -> tuple:
+    """Transcribe an audio file using Faster-Whisper.
 
     Returns:
         (transcript, detected_language, language_probability)
     """
-    segments, info = whisper_model.transcribe(file_path, beam_size=5, language=None)
+    segments, info = whisper_model.transcribe(file_path, beam_size=5, language=language)
     transcript = " ".join(segment.text.strip() for segment in segments)
     logger.info(
         f"Transcribed (detected={info.language}, prob={info.language_probability:.2f}, "
@@ -526,7 +526,7 @@ def _main_menu_text() -> str:
     return (
         "👋 *Voice Transcription Bot*\n\n"
         "Send me a *voice message* or *audio file* and I'll transcribe it instantly.\n\n"
-        "_Language is always auto-detected._"
+        "_Transcribes in your configured language (default: English)._"
     )
 
 
@@ -550,8 +550,8 @@ def _settings_text(user_id: int) -> str:
     return (
         "⚙️ *Your Settings*\n\n"
         f"Preferred languages: `{' '.join(langs)}`\n\n"
-        "_Whisper always auto-detects the language. Your list is used to warn you "
-        "when something unexpected is detected._"
+        "_One language: Whisper is pinned to it (no auto-detection). "
+        "Multiple languages: Whisper auto-detects and warns if unexpected._"
     )
 
 
@@ -663,7 +663,9 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await voice_file.download_to_drive(audio_path)
 
     try:
-        transcript, detected_lang, lang_prob = transcribe_audio(audio_path)
+        preferred = get_user_languages(user_id)
+        lang_hint = preferred[0] if len(preferred) == 1 else None
+        transcript, detected_lang, lang_prob = transcribe_audio(audio_path, language=lang_hint)
         log_transcription(timestamp, sender, transcript, source="voice",
                           detected_lang=detected_lang, lang_prob=lang_prob)
 
@@ -678,7 +680,6 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if GOOGLE_ENABLED:
             destinations.append("📊 Google Sheets")
 
-        preferred = get_user_languages(user_id)
         reply = _build_transcript_reply(transcript, detected_lang, lang_prob, preferred, destinations)
         await message.reply_text(reply, parse_mode="Markdown")
 
@@ -707,7 +708,9 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await audio_file.download_to_drive(audio_path)
 
     try:
-        transcript, detected_lang, lang_prob = transcribe_audio(audio_path)
+        preferred = get_user_languages(user_id)
+        lang_hint = preferred[0] if len(preferred) == 1 else None
+        transcript, detected_lang, lang_prob = transcribe_audio(audio_path, language=lang_hint)
         log_transcription(timestamp, sender, transcript, source="audio",
                           detected_lang=detected_lang, lang_prob=lang_prob)
 
@@ -722,7 +725,6 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if GOOGLE_ENABLED:
             destinations.append("📊 Google Sheets")
 
-        preferred = get_user_languages(user_id)
         reply = _build_transcript_reply(transcript, detected_lang, lang_prob, preferred, destinations)
         await message.reply_text(reply, parse_mode="Markdown")
 
@@ -766,10 +768,9 @@ async def handle_setlanguages(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     languages = [lang.lower().strip() for lang in args]
     set_user_languages(user.id, user.username or str(user.id), languages)
+    hint = f"Whisper is pinned to `{languages[0]}`." if len(languages) == 1 else "Whisper will auto-detect from multiple languages."
     await update.message.reply_text(
-        f"✅ Preferred languages updated to: `{' '.join(languages)}`\n"
-        "Whisper will still auto-detect the language — you'll be notified if it detects "
-        "something outside your list.",
+        f"✅ Languages updated to: `{' '.join(languages)}`\n{hint}",
         parse_mode="Markdown"
     )
 
@@ -1082,7 +1083,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "menu_lang_picker":
         await query.edit_message_text(
             "🌐 *Choose your preferred languages:*\n\n"
-            "_Whisper always auto-detects — this controls which languages are 'expected'._",
+            "_One language: Whisper is pinned to it. Multiple: auto-detect._",
             parse_mode="Markdown",
             reply_markup=_lang_picker_keyboard(),
         )

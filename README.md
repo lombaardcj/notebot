@@ -9,8 +9,8 @@ Transcripts are saved to local markdown files and optionally to Google Sheets. T
 ## Features
 
 - Transcribes voice messages and audio file attachments
-- Auto-detects language (no manual language selection needed)
-- Per-user preferred language list — warns when detected language differs
+- Per-user language setting — defaults to English; change via `/setlanguages` (e.g. `af` for Afrikaans)
+- One language pinned → Whisper uses it directly (no unreliable auto-detection); multiple languages → auto-detect with warning on unexpected result
 - Saves transcripts to local `.md` files and/or Google Sheets
 - Admin account with dynamic user access control:
   - Users request access via `/requestaccess`
@@ -206,6 +206,14 @@ logs/
 transcripts/                  # saved markdown transcripts
 secrets/                      # service account credentials (git-ignored)
 ```
+
+## Changelog
+
+### v1.1.0 — 2026-06-28
+- **Language pinning:** Default language changed from auto-detect to English (`en`). Set via `/setlanguages` (e.g. `af` for Afrikaans). One language → Whisper is pinned; multiple languages → auto-detect with warning.
+
+### v1.0.0 — 2026-05-24
+- Initial open-source release with Telegram voice/audio transcription, Google Sheets integration, Docker support, and per-user language preferences.
 
 ## License
 
