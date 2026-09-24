@@ -2,6 +2,7 @@ services:
   notebot:
     build: .
     restart: unless-stopped
+    mem_limit: 256m
     env_file: .env
     volumes:
       # Persist transcripts and logs on the host
